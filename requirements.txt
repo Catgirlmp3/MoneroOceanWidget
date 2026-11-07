@@ -1,2 +1,5 @@
-requests
+# Runtime dependencies for running the tray app from source.
+# (The packaged .exe bundles these; pyinstaller is only needed to rebuild it.)
+pystray
+pillow
 pyinstaller

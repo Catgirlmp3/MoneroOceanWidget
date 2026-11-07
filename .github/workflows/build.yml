@@ -18,13 +18,25 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: pyinstaller --onefile monero_hashrate.py
+      - name: Build tray app
+        run: >
+          python -m PyInstaller --onefile --noconsole --clean
+          --name MoneroOceanTray --hidden-import pystray._win32
+          --collect-submodules pystray monero_tray.py
+      - name: Build CLI helper
+        run: >
+          python -m PyInstaller --onefile --noconsole --clean
+          --name monero_hashrate monero_hashrate.py
       - uses: actions/upload-artifact@v4
         with:
-          name: monero_hashrate
-          path: dist/monero_hashrate.exe
+          name: MoneroOceanTray
+          path: |
+            dist/MoneroOceanTray.exe
+            dist/monero_hashrate.exe
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/monero_hashrate.exe
+          files: |
+            dist/MoneroOceanTray.exe
+            dist/monero_hashrate.exe
