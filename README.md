@@ -32,6 +32,14 @@ A Windows system-tray icon that shows your MoneroOcean hashrate at a glance.
 The wallet is baked into the build. To use a different wallet, pass it as the
 first argument or set the `MONERO_WALLET` environment variable.
 
+The tray app avoids overlapping API refreshes and only updates the tray icon,
+tooltip, or menu when the displayed value changes. Network polling runs on a
+background worker so a slow API response does not hold up tray setup.
+
+For optional refresh timing diagnostics, set the user environment variable
+`MONERO_WIDGET_DIAGNOSTICS=1` and restart the app. Successful refresh durations
+and skipped overlapping refreshes will then be written to the log.
+
 The tray icon writes errors to:
 
 ```
