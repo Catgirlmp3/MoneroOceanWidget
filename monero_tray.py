@@ -22,13 +22,13 @@ import monero_hashrate as api
 
 APP_NAME = "MoneroOceanHashrate"
 MUTEX_NAME = "Local\\MoneroOceanHashrateTray"
-RUN_KEY = r"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+RUN_KEY = "Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run"
 REFRESH_SECONDS = 60
 DIAGNOSTICS = os.environ.get("MONERO_WIDGET_DIAGNOSTICS", "").strip().lower() in {
     "1", "true", "yes", "on"
 }
 DASHBOARD_URL = "https://moneroocean.stream/#/wallet/{wallet}/overview?window=all&mode=xmr&view=list&sort=name&dir=asc"
-FONT_PATH = Path(os.environ.get("WINDIR", r"C:\\Windows")) / "Fonts" / "ARIALNB.TTF"
+FONT_PATH = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "ARIALNB.TTF"
 FALLBACK_FONT_PATH = Path(os.environ.get("WINDIR", r"C:\\Windows")) / "Fonts" / "segoeuib.ttf"
 
 _state = {
