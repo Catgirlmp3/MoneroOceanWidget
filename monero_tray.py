@@ -54,7 +54,7 @@ def log(message):
         folder = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "MoneroOceanWidget"
         folder.mkdir(parents=True, exist_ok=True)
         with open(folder / "tray.log", "a", encoding="utf-8") as handle:
-            handle.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}\\n")
+            handle.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}\n")
     except OSError:
         pass
 
