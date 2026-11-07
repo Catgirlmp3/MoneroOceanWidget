@@ -8,6 +8,7 @@ import ctypes
 import os
 import sys
 import threading
+import time
 import webbrowser
 import winreg
 from datetime import datetime
@@ -21,11 +22,14 @@ import monero_hashrate as api
 
 APP_NAME = "MoneroOceanHashrate"
 MUTEX_NAME = "Local\\MoneroOceanHashrateTray"
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_KEY = r"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 REFRESH_SECONDS = 60
+DIAGNOSTICS = os.environ.get("MONERO_WIDGET_DIAGNOSTICS", "").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 DASHBOARD_URL = "https://moneroocean.stream/#/wallet/{wallet}/overview?window=all&mode=xmr&view=list&sort=name&dir=asc"
-FONT_PATH = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "ARIALNB.TTF"
-FALLBACK_FONT_PATH = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "segoeuib.ttf"
+FONT_PATH = Path(os.environ.get("WINDIR", r"C:\\Windows")) / "Fonts" / "ARIALNB.TTF"
+FALLBACK_FONT_PATH = Path(os.environ.get("WINDIR", r"C:\\Windows")) / "Fonts" / "segoeuib.ttf"
 
 _state = {
     "full": "loading...",
@@ -36,8 +40,13 @@ _state = {
     "checked_at": None,
 }
 _state_lock = threading.Lock()
+_refresh_lock = threading.Lock()
+_stop_event = threading.Event()
 _icon = None
 _mutex = None
+_last_icon_key = None
+_last_tooltip = None
+_last_menu_label = None
 
 
 def log(message):
@@ -45,7 +54,7 @@ def log(message):
         folder = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "MoneroOceanWidget"
         folder.mkdir(parents=True, exist_ok=True)
         with open(folder / "tray.log", "a", encoding="utf-8") as handle:
-            handle.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}\n")
+            handle.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}\\n")
     except OSError:
         pass
 
@@ -54,12 +63,12 @@ def hashrate_color(value):
     """Background colour for a hashrate in H/s, interpolated between anchors."""
     kh = value / 1000.0
     anchors = [
-        (0.0, (255, 0, 0)),      # red = weakest
-        (8.0, (255, 0, 0)),      # red until 8 kH/s
-        (9.0, (255, 165, 0)),    # gradient red -> orange
-        (10.0, (0, 0, 0)),       # gradient orange -> black at 10 kH/s
-        (15.0, (201, 167, 255)),  # gradient black -> light purple
-        (20.0, (255, 158, 207)),  # gradient light purple -> pink
+        (0.0, (255, 0, 0)),
+        (8.0, (255, 0, 0)),
+        (9.0, (255, 165, 0)),
+        (10.0, (0, 0, 0)),
+        (15.0, (201, 167, 255)),
+        (20.0, (255, 158, 207)),
     ]
 
     if kh <= anchors[0][0]:
@@ -166,37 +175,89 @@ def hashrate_label(item=None):
     return f"Hashrate: {full}" if ok else f"Hashrate: {full} (offline)"
 
 
-def refresh_worker(icon=None):
-    icon = icon or _icon
-    try:
-        value = api.fetch_hashrate(api.get_wallet())
-        full = api.format_hashrate(value)
-        with _state_lock:
-            _state.update(
-                full=full,
-                compact=compact_hashrate(value),
-                value=value,
-                ok=True,
-                error="",
-                checked_at=datetime.now(),
-            )
-        log(f"OK {full}")
-    except Exception as exc:  # network error, bad JSON, etc.
-        with _state_lock:
-            _state.update(ok=False, error=str(exc))
-        log(f"ERROR {exc}")
+def _update_tray_ui(icon):
+    """Touch the Windows tray shell only when the displayed value changed."""
+    global _last_icon_key, _last_tooltip, _last_menu_label
 
-    if icon is not None:
+    with _state_lock:
+        compact = _state["compact"]
+        ok = _state["ok"]
+        value = _state["value"]
+
+    icon_key = (compact, ok, hashrate_color(value) if ok and value is not None else None)
+    tooltip = tooltip_text()
+    menu_label = hashrate_label()
+
+    if icon_key != _last_icon_key:
         icon.icon = render_icon()
-        icon.title = tooltip_text()
+        _last_icon_key = icon_key
+
+    if tooltip != _last_tooltip:
+        icon.title = tooltip
+        _last_tooltip = tooltip
+
+    if menu_label != _last_menu_label:
         try:
             icon.update_menu()
-        except Exception:
-            pass
+        except Exception as exc:
+            if DIAGNOSTICS:
+                log(f"MENU_UPDATE_ERROR {exc}")
+        _last_menu_label = menu_label
+
+
+def refresh_worker(icon=None):
+    """Fetch one update. Concurrent refresh requests are discarded, not queued."""
+    icon = icon or _icon
+    if not _refresh_lock.acquire(blocking=False):
+        if DIAGNOSTICS:
+            log("REFRESH_SKIPPED already running")
+        return
+
+    started = time.perf_counter()
+    try:
+        try:
+            value = api.fetch_hashrate(api.get_wallet())
+            full = api.format_hashrate(value)
+            with _state_lock:
+                _state.update(
+                    full=full,
+                    compact=compact_hashrate(value),
+                    value=value,
+                    ok=True,
+                    error="",
+                    checked_at=datetime.now(),
+                )
+            if DIAGNOSTICS:
+                log(f"REFRESH_OK {full} elapsed={time.perf_counter() - started:.3f}s")
+        except Exception as exc:  # network error, bad JSON, etc.
+            with _state_lock:
+                _state.update(ok=False, error=str(exc))
+            log(f"REFRESH_ERROR elapsed={time.perf_counter() - started:.3f}s {exc}")
+
+        if icon is not None:
+            try:
+                _update_tray_ui(icon)
+            except Exception as exc:
+                if DIAGNOSTICS:
+                    log(f"TRAY_UPDATE_ERROR {exc}")
+    finally:
+        _refresh_lock.release()
 
 
 def refresh_now(icon, item=None):
-    threading.Thread(target=refresh_worker, args=(icon,), daemon=True).start()
+    threading.Thread(
+        target=refresh_worker,
+        args=(icon,),
+        name="MoneroOceanManualRefresh",
+        daemon=True,
+    ).start()
+
+
+def poll_loop(icon):
+    """Keep network work off pystray's setup/UI lifecycle thread."""
+    refresh_worker(icon)
+    while not _stop_event.wait(REFRESH_SECONDS):
+        refresh_worker(icon)
 
 
 def open_dashboard(icon, item=None):
@@ -238,6 +299,7 @@ def toggle_startup(icon, item=None):
 
 
 def exit_app(icon, item=None):
+    _stop_event.set()
     if icon is not None:
         icon.stop()
 
@@ -271,10 +333,12 @@ def main():
 
     def setup(icon):
         icon.visible = True
-        refresh_worker(icon)
-        while True:
-            threading.Event().wait(REFRESH_SECONDS)
-            refresh_worker(icon)
+        threading.Thread(
+            target=poll_loop,
+            args=(icon,),
+            name="MoneroOceanPoller",
+            daemon=True,
+        ).start()
 
     _icon.run(setup=setup)
 
